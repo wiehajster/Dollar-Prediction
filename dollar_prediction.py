@@ -1,10 +1,10 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
 import math
+import keras
 from keras.models import Sequential
-from keras.layers import Dense
-from keras.layers import LSTM
+from keras.layers import Dense, LSTM
+from keras import backend as K
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import mean_absolute_error
@@ -13,38 +13,28 @@ import plotly.graph_objects as go
 def create_dataset(dataset, look_back=1):
     dataX, dataY = [], []
     for i in range(len(dataset)-look_back):
-        a = dataset[i:(i+look_back), 0]
+        a = dataset[i:(i+look_back)]
         dataX.append(a)
-        dataY.append(dataset[i + look_back])
+        dataY.append(dataset[i + look_back, 0])
     trainX = np.array(dataX)
     trainY = np.array(dataY)
-    return trainX, trainY
+    return trainX, trainY.reshape(trainY.shape[0], 1)
 
 def create_baseline(dataset, look_back=1):
     baseline = []
     for i in range(len(dataset)-look_back):
-        baseline.append(dataset[i+look_back-1])
+        baseline.append(dataset[i+look_back-1, 0])
     baseline = np.array(baseline)
-    return baseline
+    return baseline.reshape(baseline.shape[0], 1)
 
-def split_dataset(dataset, percent=0.8):
+def split_dataset(dataset, baseline, look_back, percent=0.8):
     train_size = int(len(dataset) * percent)
-    test_size = len(dataset) - train_size
     train, test = dataset[0:train_size,:], dataset[train_size:len(dataset),:]
-    return train, test
-
-def reshape_for_lstm(trainX, testX, look_back):
-    trainX = np.reshape(trainX, (trainX.shape[0], 1, trainX.shape[1]))
-    testX = np.reshape(testX, (testX.shape[0], 1, testX.shape[1]))
-    return trainX, testX
-
-def normalize(dataset, a=0, b=1):
-    scaler = MinMaxScaler(feature_range=(a, b))
-    dataset = scaler.fit_transform(dataset)
-    return scaler, dataset
+    trainBaseline = baseline[0:train_size-look_back,:]
+    testBaseline = baseline[train_size:len(baseline),:]
+    return train, test, trainBaseline, testBaseline
 
 def invert(trainPredict, trainY, testPredict, testY, scaler):
-    # invert predictions
     trainPredictInv = scaler.inverse_transform(trainPredict)
     trainYInv = scaler.inverse_transform(trainY)
     testPredictInv = scaler.inverse_transform(testPredict)
@@ -72,90 +62,97 @@ def score(trainPredict, trainY, testPredict, testY, trainBaseline, testBaseline,
     print('Train Baseline Score: %.5f %s' % (trainBaselineScore, err_type.upper()))
     print('Test Baseline Score: %.5f %s' % (testBaselineScore, err_type.upper()))
 
-def mean_absolute_percentage_error(y_true, y_pred):
-    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+def mean_absolute_percentage_error(y_pred, y_true):
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100.
 
 def root_mean_squared_error(y_true, y_pred):
     return math.sqrt(mean_squared_error(y_true, y_pred))
 
-def split_baseline(baseline, trainPredict, look_back):
-    trainBaseline = baseline[0:trainPredict.shape[0],:]
-    testBaseline = baseline[trainPredict.shape[0]+look_back:len(baseline),:]
-    return trainBaseline, testBaseline
-
-def createPredictPlot(trainPredict, testPredict, look_back):
-    # shift train predictions for plotting
-    trainPredictPlot = np.empty_like(dataset)
+def createPredictPlot(trainPredict, testPredict, baseline, look_back):
+    trainPredictPlot = np.empty_like(dataset[:,0])
+    trainPredictPlot = trainPredictPlot.reshape(trainPredictPlot.shape[0],1)
     trainPredictPlot[:, :] = np.nan
     trainPredictPlot[look_back:len(trainPredict)+look_back, :] = trainPredict
-    # shift test predictions for plotting
-    testPredictPlot = np.empty_like(dataset)
+
+
+    testPredictPlot = np.empty_like(dataset[:,0])
+    testPredictPlot = testPredictPlot.reshape(testPredictPlot.shape[0],1)
     testPredictPlot[:, :] = np.nan
-    testPredictPlot[len(trainPredict)+look_back+1:len(dataset)-look_back+1, :] = testPredict
-    return trainPredictPlot, testPredictPlot
+    testPredictPlot[len(trainPredict)+2*look_back:len(dataset), :] = testPredict
+    
+    baselinePredictPlot = np.empty_like(dataset[:,0])
+    baselinePredictPlot = baselinePredictPlot.reshape(baselinePredictPlot.shape[0],1)
+    baselinePredictPlot[:, :] = np.nan
+    baselinePredictPlot[look_back:len(baseline)+look_back, :] = baseline
+    return trainPredictPlot, testPredictPlot, baselinePredictPlot
 
-def show_plot(trainPredictPlot, testPredictPlot, dataset, look_back):
-    # plot baseline and predictions
-    plt.figure(figsize=(15, 10))
-    plt.plot(dataset)
-    plt.plot(trainPredictPlot)
-    plt.plot(testPredictPlot)
-    plt.show()
-
-def show_fig(dataset, trainPredictPlot, testPredictPlot, baseline, look_back):
+def show_fig(dataset, trainPredictPlot, testPredictPlot, baselinePredictPlot, look_back):
     fig = go.Figure()
-    fig.add_trace(go.Scatter(y=dataset[:,0], mode='lines', name='original'))
-    fig.add_trace(go.Scatter(y=trainPredictPlot[:,0], mode='lines', name='train'))
-    fig.add_trace(go.Scatter(y=testPredictPlot[:,0], mode='lines', name='test'))
-    fig.add_trace(go.Scatter(y=baseline[look_back:,0], mode='lines', name='baseline'))
-    fig.update_layout(showlegend=True)
+    print(look_back)
+    fig.add_trace(go.Scatter(y=dataset[:,0], mode='lines', name="przebieg oryginalny"))
+    fig.add_trace(go.Scatter(y=trainPredictPlot[:,0], mode='lines',\
+                             name='przebieg przewidziany przez model na zbiorze treningowym'))
+    fig.add_trace(go.Scatter(y=testPredictPlot[:,0], mode='lines',\
+                             name='przebieg przewidziany przez model na zbiorze testowym'))
+    fig.add_trace(go.Scatter(y=baselinePredictPlot[:,0], mode='lines', name='przebieg baseline\'u'))
+    fig.update_layout(showlegend=True, xaxis_title="dzień",\
+                      yaxis_title="kurs dolara", title="Wykres kursu dolara")
     fig.show()
 
-# fix random seed for reproducibility
 np.random.seed(7)
 
-# load the dataset
 df = pd.read_csv('exchange_rate.csv')
+df = df.iloc[::-1].reset_index()
+
 df = df.rename(columns={'Unnamed: 0': 'Date'})
 df = df.loc[:,['Date', 'PLN']]
+s = pd.to_datetime(df['Date'])
+df['day of week'] = s.dt.dayofweek
+s = pd.get_dummies(df['day of week'])
+df = pd.concat([df, s], axis=1)
+df = df.drop(['day of week'], axis=1)
+df = df.drop(['Date'], axis=1)
 
-dataset = df['PLN'].values
-dataset = dataset.reshape(dataset.shape[0],1)
-
-train, test = split_dataset(dataset, percent=0.8)
-
-scaler, train = normalize(train, 0, 1)
-test = scaler.transform(test)
-
-# reshape into X=t and Y=t+1
+dataset = df.values
 look_back = 10
+baseline = create_baseline(dataset, look_back)
+train, test, trainBaseline, testBaseline = split_dataset(dataset, baseline, look_back, percent=0.8)
+shape_train = (len(train[:, 0]), 1)
+shape_test = (len(test[:, 0]), 1)
+scaler = MinMaxScaler(feature_range=(0, 1))
+train[:, 0] = scaler.fit_transform(np.reshape(train[:, 0], shape_train)).squeeze()
+test[:, 0] = scaler.transform(np.reshape(test[:, 0], shape_test)).squeeze()
+
 trainX, trainY = create_dataset(train, look_back)
 testX, testY = create_dataset(test, look_back)
 
-trainX, testX = reshape_for_lstm(trainX, testX, look_back)
-
-# create and fit the LSTM network
 model = Sequential()
-model.add(LSTM(15, input_shape=(1, look_back)))
+optimizer = keras.optimizers.Adam(lr=0.001)
+model.add(LSTM(15, input_shape=(look_back, 8)))
 model.add(Dense(1))
-model.compile(loss='mean_absolute_error', optimizer='adam')
+model.compile(loss='mae', optimizer=optimizer)
 model.fit(trainX, trainY, epochs=1000, batch_size=32, verbose=2)
+
+K.set_value(model.optimizer.learning_rate, 0.0001)
+model.fit(trainX, trainY, epochs=500, batch_size=32, verbose=2)
+
+K.set_value(model.optimizer.learning_rate, 0.00005)
+model.fit(trainX, trainY, epochs=500, batch_size=32, verbose=2)
+
+model.load_weights('model.h5')
 
 trainPredict = model.predict(trainX)
 testPredict = model.predict(testX)
 
 trainPredict, trainY, testPredict, testY = invert(trainPredict, trainY, testPredict, testY, scaler)
 
-baseline = create_baseline(dataset, look_back)
-
-trainBaseline, testBaseline = split_baseline(baseline, trainPredict, look_back)
-
 score(trainPredict, trainY, testPredict, testY, trainBaseline, testBaseline, 'mape')
+print('\n')
+score(trainPredict, trainY, testPredict, testY, trainBaseline, testBaseline, 'mae')
+print('\n')
+score(trainPredict, trainY, testPredict, testY, trainBaseline, testBaseline, 'rmse')
 
-trainPredictPlot, testPredictPlot = createPredictPlot(trainPredict, testPredict, look_back)
-show_plot(trainPredictPlot, testPredictPlot, dataset, look_back)
-show_fig(dataset, trainPredictPlot, testPredictPlot, baseline, look_back)
-
-
-
-
+trainPredictPlot, testPredictPlot, baselinePredictPlot =\
+    createPredictPlot(trainPredict, testPredict, baseline, look_back)
+show_fig(scaler.inverse_transform(dataset), trainPredictPlot, testPredictPlot,\
+         baselinePredictPlot, look_back)
