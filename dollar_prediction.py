@@ -139,7 +139,7 @@ model.fit(trainX, trainY, epochs=500, batch_size=32, verbose=2)
 K.set_value(model.optimizer.learning_rate, 0.00005)
 model.fit(trainX, trainY, epochs=500, batch_size=32, verbose=2)
 
-model.load_weights('model.h5')
+model.save_weights('model.h5')
 
 trainPredict = model.predict(trainX)
 testPredict = model.predict(testX)
